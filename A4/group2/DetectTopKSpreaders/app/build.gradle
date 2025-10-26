@@ -8,6 +8,7 @@ repositories {
 
 dependencies {
     implementation 'org.neo4j:neo4j:2025.07.1'
+    implementation 'org.json:json:20231013'
 }
 
 java {

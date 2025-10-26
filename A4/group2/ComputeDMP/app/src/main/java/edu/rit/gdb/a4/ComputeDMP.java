@@ -23,8 +23,8 @@ public class ComputeDMP {
 		try (BufferedReader reader = new BufferedReader(new FileReader(jsonFile))) {
 			String line;
 			while ((line = reader.readLine()) != null) {
-				JSONObject obj = new JSONObject(line);
-				String database = obj.getString("database");
+				JSONObject json = new JSONObject(line);
+				String database = json.getString("database");
 				try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, database);) {
 					GraphDatabaseService db = serviceDb.database(GraphDatabaseSettings.initial_default_database.defaultValue());
 
@@ -35,6 +35,7 @@ public class ComputeDMP {
 					// degree, descending. Both rankc and rankd must be realistic ranks. Finally,
 					// the dmp property is the combination of both rankc and rankd for each node.
 
+					System.out.println("=== Processing " + database + " ===");
 					ComputeDMP(db);
 				}
 			}
@@ -43,38 +44,48 @@ public class ComputeDMP {
 
 	private static void ComputeDMP(GraphDatabaseService db) {
 		db.executeTransactionally("CREATE INDEX id_idx IF NOT EXISTS FOR (n:Node) ON n.id");
-		String cypher = """
-			MATCH (n:Node)
-			WITH n, COALESCE(n.psi, n.psiest) AS psi, COUNT {(n)--()} AS degree
-			ORDER BY psi DESC, degree DESC, n.id ASC
-			RETURN COLLECT({psi: psi, degree: degree, id: n.id}) AS nodes
-		""";
-		List<Map<String, Object>> nodes = db.executeTransactionally(cypher, Map.of(), r -> ((List<Map<String, Object>>) r.next().get("nodes")));
+		List<Map<String, Object>> nodes = db.executeTransactionally(
+				"""
+					MATCH (n:Node)
+					WITH n, COALESCE(n.psi, n.psiest) AS psi, COUNT {(n)--()} AS degree
+					ORDER BY psi DESC, degree DESC, n.id ASC
+					RETURN COLLECT({id: n.id, psi: psi, degree: degree}) AS nodes
+				""",
+				Map.of(),
+				r -> (List<Map<String, Object>>) r.next().get("nodes")
+		);
+
+		// Compute rankc and add to nodes map
 		SetRank(nodes, true);
+
+		// Compute rankd and add to nodes map
 		nodes.sort((a, b) -> {
 			int degreeCompare = Long.compare((long) b.get("degree"), (long) a.get("degree"));
 			if (degreeCompare != 0) return degreeCompare;
 			return Long.compare((long) a.get("id"), (long) b.get("id"));
 		});
 		SetRank(nodes, false);
+
+		// Compute dmp
 		SetDMP(nodes);
 
 		// Update nodes
 		int batchSize = 1000;
 		for (int i = 0; i < nodes.size(); i += batchSize) {
-			int endIndex = Math.min(i + batchSize, nodes.size());
-			String updateCypher = """
-				UNWIND $nodes AS node
-				MATCH (n:Node {id: node.id})
-				SET n.rankc = node.rankc, n.rankd = node.rankd, n.dmp = node.dmp
-			""";
-			db.executeTransactionally(updateCypher, Map.of("nodes", nodes.subList(i, endIndex)));
+			db.executeTransactionally(
+					"""
+						UNWIND $nodes AS node
+						MATCH (n:Node {id: node.id})
+						SET n.rankc = node.rankc, n.rankd = node.rankd, n.dmp = node.dmp
+					""",
+					Map.of("nodes", nodes.subList(i, Math.min(i + batchSize, nodes.size())))
+			);
 		}
 	}
 
 	private static void SetRank(List<Map<String, Object>> nodes, boolean usePsi) {
 		int n = nodes.size();
-		for (int i = 0; i < n; ) {
+		for (int i = 0; i < n;) {
 			// Find ties
 			int j = i + 1;
 			while (j < n &&
