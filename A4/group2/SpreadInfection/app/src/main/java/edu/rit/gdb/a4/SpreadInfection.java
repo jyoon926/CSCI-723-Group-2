@@ -31,6 +31,8 @@ public class SpreadInfection {
 				// were infected and update the f property of the seed with that value. It is
 				// expected that nodes that belong to the degeneracy core will have larger
 				// infection counts than nodes that are not in the degeneracy core.
+
+				// TODO testing commit
 			}
 		}
 	}
