@@ -48,7 +48,7 @@ public class DetectTopKSpreaders {
 					procedures.registerFunction(BigDecimalFunctions.class);
 					procedures.registerAggregationFunction(BigDecimalSUM.class);
 
-					// TODO Get the degeneracy core (the subset of nodes with largest psi) from the
+					// Get the degeneracy core (the subset of nodes with largest psi) from the
 					// original database and copy them in the copy. Then, get the induced subgraph
 					// (the edges connecting them) and copy them in the copy. For each node, compute
 					// property x using the centrality algorithm studied in class. These x
@@ -63,7 +63,6 @@ public class DetectTopKSpreaders {
 					// required to use these functions. You can also deal with the numbers in your
 					// Java program.
 
-					System.out.println("=== Processing " + database + " ===");
 					DetectTopSpreaders(db, dbCopy, maxIter, patience, epsilon);
 				}
 			}
@@ -97,7 +96,6 @@ public class DetectTopKSpreaders {
 					Map.of(),
 					r -> r.next().get("e").toString()
 			);
-			System.out.println("- e=" + e);
 			int result = (new BigDecimal(e)).compareTo(BigDecimal.valueOf(count * epsilon));
 			if (result < 0 && i >= patience) break;
 		}
@@ -137,6 +135,7 @@ public class DetectTopKSpreaders {
 		nodes.clear();
 
 		// Create indexes over id
+		db.executeTransactionally("CREATE INDEX id_index IF NOT EXISTS FOR (n:Node) ON (n.id)");
 		dbCopy.executeTransactionally("CREATE INDEX id_index IF NOT EXISTS FOR (n:Node) ON (n.id)");
 
 		// Copy edges in batches
@@ -145,8 +144,8 @@ public class DetectTopKSpreaders {
 		while (true) {
 			List<Map<String, Long>> edges = db.executeTransactionally(
 					"""
-                        MATCH (a:Node)-->(b:Node)
-                        WHERE a.psi = $maxPsi AND b.psi = $maxPsi
+                        MATCH (a:Node)--(b:Node)
+                        WHERE a.psi = $maxPsi AND b.psi = $maxPsi AND a.id < b.id
                         WITH a.id AS a, b.id AS b
                         ORDER BY a, b
                         SKIP $skip LIMIT $limit

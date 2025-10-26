@@ -28,16 +28,12 @@ public class SpreadInfection {
 		for (int input = 0; input < jsonLines.size(); input++){
 			Document doc = Document.parse(jsonLines.get(input));
 			String database = doc.getString("database");
-
 			final int repetitions = doc.getInteger("repetitions");
 			final List<Integer> seeds = doc.getList("seeds", Integer.class);
 			final double infectionRate = doc.getDouble("infection_rate");
 
 			try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, database);) {
-				GraphDatabaseService db = serviceDb
-						.database(GraphDatabaseSettings.initial_default_database.defaultValue());
-
-				db.executeTransactionally("MATCH (n:Node) CALL {WITH n REMOVE n.f} IN TRANSACTIONS OF 1000 ROWS");
+				GraphDatabaseService db = serviceDb.database(GraphDatabaseSettings.initial_default_database.defaultValue());
 
 				// For each seed, you must infect it using the status property. You need to
 				// spread the infection using the infection rate. You need to repeat this
@@ -46,60 +42,68 @@ public class SpreadInfection {
 				// expected that nodes that belong to the degeneracy core will have larger
 				// infection counts than nodes that are not in the degeneracy core.
 
-				// for each seed value
-				for (Integer v : seeds) {
-					// reset the status each time
-					db.executeTransactionally("MATCH (n:Node) CALL {WITH n REMOVE n.status} IN TRANSACTIONS OF 1000 ROWS");
-					long seed = (long) v;
-					int f = 0; // f(v) is influence of an input node v
+				for (long v : seeds) {
+					// Set v.f = 0
+					db.executeTransactionally("MATCH (v:Node {id: $v}) SET v.f = 0", Map.of("v", v));
 					for (int i = 0; i < repetitions; i++) {
+						// set all nodes to Susceptible (null)
+						db.executeTransactionally("MATCH (vp:Node) CALL {WITH vp REMOVE vp.status} IN TRANSACTIONS OF 1000 ROWS");
+						// set v.status = Infected
+						db.executeTransactionally("MATCH (v:Node {id: $v}) SET v.status = \"I\"", Map.of("v", v));
+
 						int fp = 0;
 						int step = 0;
-						// set v.status = Infected //TODO set to X?
-						db.executeTransactionally("MATCH (v {id: $id}) SET v.status = \"I\"", Map.of("id", seed));
-						// all other nodes start with status of Susceptible = null
 
-						// get all nodes with Infected status
-						List<Long> infected = db.executeTransactionally(
-								"MATCH (vp) " +
-										"WHERE vp.status = \"I\" " +
-										"SET vp.status = \"R\" " +
-										"RETURN COLLECT (vp.id) as vpids",
-								Map.of("id", seed),
-								r -> ((List<Long>) r.next().get("vpids")));
-						for (Long id : infected) {
-							int cnt = 0;
-							// set all nodes with Infected status to Recovered and randomly infect neighbors
-							Map<String, Object> infectParams = new HashMap<>();
-							infectParams.put("id", id);
-							infectParams.put("beta", infectionRate);
-							List<Long> newInfected = db.executeTransactionally(
-									"MATCH (vp)--(n) " +
-											"WHERE vp.id = $id AND n.status IS NULL " +
-											"WITH rand() as r, n as n " +
-											"WHERE $beta >= rand() " +
-											"SET n.status = \"I\" " +
-											"RETURN COLLECT(n.id) as ids",
-									infectParams,
-									r -> ((List<Long>) r.next().get("ids"))
+						while (InfectedNodesLeft(db)) {
+							int count = db.executeTransactionally(
+									"""
+										MATCH (vp:Node)
+										WHERE vp.status = "I"
+										SET vp.status = "R"
+										WITH vp
+										MATCH (vp)--(vpp:Node)
+										WHERE vpp.status IS NULL
+										WITH vpp, rand() AS r
+										WHERE $beta >= r
+										SET vpp.status = "I"
+										RETURN COUNT(vpp) AS count
+									""",
+									Map.of("beta", infectionRate),
+									r -> ((Long) r.next().get("count")).intValue()
 							);
-							cnt += newInfected.size();
-							fp = fp + cnt;
-							step++;
+							fp += count;
+							step += 1;
 						}
-						if (step != 0) {
-							f = f + (fp / step);
-						}
+						db.executeTransactionally(
+								"""
+									MATCH (v:Node {id: $v})
+									SET v.f = v.f + ($fp / $step)
+								""",
+								Map.of("v", v, "fp", fp, "step", step)
+						);
 					}
-					f = f / repetitions;
-					// set v.f to f value
-					Map<String, Object> params = new HashMap<>();
-					params.put("id", seed);
-					params.put("f", f);
-					db.executeTransactionally("MATCH (v {id: $id}) SET v.f = $f", params);
+					db.executeTransactionally(
+							"""
+                                MATCH (v:Node {id: $v})
+                                SET v.f = v.f / $r
+                            """,
+							Map.of("v", v, "r", repetitions)
+					);
 				}
 			}
 		}
+	}
+
+	private static boolean InfectedNodesLeft(GraphDatabaseService db) {
+		return db.executeTransactionally(
+				"""
+					MATCH (vp:Node)
+					WHERE vp.status = "I"
+					RETURN COUNT(vp) AS count
+				""",
+				Map.of(),
+				r -> r.hasNext() && (long) r.next().get("count") > 0
+		);
 	}
 
 	private static DatabaseManagementService getNeo4jConnection(String neo4jFolder, String database) {
