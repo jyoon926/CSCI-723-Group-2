@@ -28,14 +28,13 @@ public class ComputeDMP {
 				try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, database);) {
 					GraphDatabaseService db = serviceDb.database(GraphDatabaseSettings.initial_default_database.defaultValue());
 
-					// TODO Nodes will have either psi or psiest set (but not both). Compute the
+					// Nodes will have either psi or psiest set (but not both). Compute the
 					// ranks of the nodes using psi or psiest, descending, and using degrees when
 					// psi/psiest are tied, also descending. This is stored in a rankc property.
 					// Similarly, the rankd property is the rank of the node according to its
 					// degree, descending. Both rankc and rankd must be realistic ranks. Finally,
 					// the dmp property is the combination of both rankc and rankd for each node.
 
-					System.out.println("=== Processing " + database + " ===");
 					ComputeDMP(db);
 				}
 			}
