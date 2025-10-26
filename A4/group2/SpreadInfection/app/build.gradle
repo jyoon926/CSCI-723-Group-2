@@ -8,6 +8,7 @@ repositories {
 
 dependencies {
     implementation 'org.neo4j:neo4j:2025.07.1'
+    implementation 'org.mongodb:bson:5.6.0'
 }
 
 java {

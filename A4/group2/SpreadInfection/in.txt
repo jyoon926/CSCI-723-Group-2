@@ -1,0 +1,2 @@
+{"database":"Email-Enron", "seeds":[136, 734, 24009, 24022], "repetitions": 5, "infection_rate": 0.10}
+{"database":"ca-AstroPh", "seeds":[1324, 1663, 49633, 119973], "repetitions": 5, "infection_rate": 0.05}
