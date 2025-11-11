@@ -6,16 +6,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import org.json.JSONObject;
 import org.neo4j.common.DependencyResolver;
 import org.neo4j.configuration.GraphDatabaseSettings;
 import org.neo4j.dbms.api.DatabaseManagementService;
 import org.neo4j.dbms.api.DatabaseManagementServiceBuilder;
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.Relationship;
-import org.neo4j.graphdb.Result;
+import org.neo4j.graphdb.*;
 import org.neo4j.kernel.api.procedure.GlobalProcedures;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.procedure.Mode;
@@ -24,6 +22,7 @@ import org.neo4j.procedure.Procedure;
 
 public class TransEModelTrain {
 	public static Random random = new Random();
+	public static MathContext MC = MathContext.DECIMAL128;
 
 	public TransEModelTrain() {
 		super();
@@ -32,9 +31,9 @@ public class TransEModelTrain {
 	private String[] generateEmbedding(long dimension) {
 		String[] embedding = new String[(int) dimension];
 		for (int i = 0; i < dimension; i++) {
-			BigDecimal v = (new BigDecimal((random.nextLong(100) + 1))).divide(new BigDecimal(100), MathContext.DECIMAL128);
-			BigDecimal max = (new BigDecimal(6)).divide((new BigDecimal(dimension)).sqrt(MathContext.DECIMAL128), MathContext.DECIMAL128);
-			v = v.multiply(max.multiply(new BigDecimal(2))).subtract(max);
+			BigDecimal v = (new BigDecimal((random.nextLong(100) + 1))).divide(new BigDecimal(100), MC);
+			BigDecimal max = BigDecimal.valueOf(6).divide(BigDecimal.valueOf(dimension).sqrt(MC), MC);
+			v = v.multiply(max.multiply(BigDecimal.TWO, MC), MC).subtract(max);
 			embedding[i] = v.toPlainString();
 		}
 		return embedding;
@@ -44,19 +43,19 @@ public class TransEModelTrain {
 		BigDecimal norm = new BigDecimal(0);
         for (String s : embedding) {
             BigDecimal v = new BigDecimal(s);
-            norm = norm.add(v.multiply(v, MathContext.DECIMAL128));
+            norm = norm.add(v.multiply(v, MC));
         }
-		norm = norm.sqrt(MathContext.DECIMAL128);
+		norm = norm.sqrt(MC);
 		for (int i = 0; i < embedding.length; i++) {
 			BigDecimal v = new BigDecimal(embedding[i]);
-			v = v.divide(norm, MathContext.DECIMAL128);
+			v = v.divide(norm, MC);
 			embedding[i] = v.toPlainString();
 		}
 		return embedding;
 	}
 
 	private List<BigDecimal> toBigDecimalList(String[] strList) {
-		return Arrays.stream(strList).map(BigDecimal::new).toList();
+		return new ArrayList<>(Arrays.stream(strList).map(BigDecimal::new).toList());
 	}
 
 	private String[] toStringArray(List<BigDecimal> embedding) {
@@ -85,64 +84,56 @@ public class TransEModelTrain {
 
 	@Procedure(name = "gdb.scalePredicate", mode = Mode.WRITE)
 	public void scale(@Name("x") Relationship x) {
-		String[] embedding = (String[]) x.getProperty("embedding");
-		List<BigDecimal> emb = toBigDecimalList(embedding);
+		List<BigDecimal> embedding = toBigDecimalList((String[]) x.getProperty("embedding"));
 
 		// Find min and max
-		BigDecimal min = emb.stream().min(BigDecimal::compareTo).orElseThrow();
-		BigDecimal max = emb.stream().max(BigDecimal::compareTo).orElseThrow();
+		BigDecimal min = embedding.stream().min(BigDecimal::compareTo).orElseThrow();
+		BigDecimal max = embedding.stream().max(BigDecimal::compareTo).orElseThrow();
 		BigDecimal range = max.subtract(min);
 
-		int dim = embedding.length;
+		int dim = embedding.size();
 
-		BigDecimal maxVal = (new BigDecimal(6)).divide(
-				(new BigDecimal(dim)).sqrt(MathContext.DECIMAL128),
-				MathContext.DECIMAL128
-		);
+		BigDecimal maxVal = BigDecimal.valueOf(6).divide(BigDecimal.valueOf(dim).sqrt(MC), MC);
 
 		// Min-max scale to [0,1], then to [-maxVal, maxVal]
-		for (int i = 0; i < emb.size(); i++) {
-			BigDecimal scaled = emb.get(i).subtract(min).divide(range, MathContext.DECIMAL128);
-			scaled = scaled.multiply(maxVal.multiply(new BigDecimal(2))).subtract(maxVal);
-			emb.set(i, scaled);
+		for (int i = 0; i < dim; i++) {
+			BigDecimal scaled = embedding.get(i).subtract(min).divide(range, MC);
+			scaled = scaled.multiply(maxVal.multiply(BigDecimal.TWO)).subtract(maxVal);
+			embedding.set(i, scaled);
 		}
 
-		x.setProperty("embedding", toStringArray(emb));
+		x.setProperty("embedding", toStringArray(embedding));
+	}
+
+	private BigDecimal distance(List<BigDecimal> sEmb, List<BigDecimal> pEmb, List<BigDecimal> oEmb, String distanceStr) {
+		BigDecimal d = BigDecimal.ZERO;
+		for (int i = 0; i < sEmb.size(); i++) {
+			BigDecimal diff = sEmb.get(i).add(pEmb.get(i)).subtract(oEmb.get(i));
+			if (distanceStr.equals("L1"))
+				d = d.add(diff.abs());
+			else
+				d = d.add(diff.multiply(diff, MC));
+		}
+		if (distanceStr.equals("L2"))
+			d = d.sqrt(MC);
+		return d;
 	}
 
 	@Procedure(name = "gdb.gradientDescent", mode = Mode.WRITE)
 	public void gradientDescent(@Name("s") Node s, @Name("p") Relationship p, @Name("o") Node o, @Name("sp") Node sp,
-			@Name("op") Node op, @Name("gamma") String gammaStr, @Name("distance") String distanceStr,
-			@Name("alpha") String alphaStr) {
+								@Name("op") Node op, @Name("gamma") String gammaStr, @Name("distance") String distanceStr,
+								@Name("alpha") String alphaStr) {
 		List<BigDecimal> sEmb = toBigDecimalList((String[]) s.getProperty("embedding"));
 		List<BigDecimal> pEmb = toBigDecimalList((String[]) p.getProperty("embedding"));
 		List<BigDecimal> oEmb = toBigDecimalList((String[]) o.getProperty("embedding"));
-		List<BigDecimal> spEmb = toBigDecimalList((String[]) sp.getProperty("embedding"));
-		List<BigDecimal> opEmb = toBigDecimalList((String[]) op.getProperty("embedding"));
+		List<BigDecimal> spEmb = sp.equals(s) ? sEmb : toBigDecimalList((String[]) sp.getProperty("embedding"));
+		List<BigDecimal> opEmb = op.equals(o) ? oEmb : toBigDecimalList((String[]) op.getProperty("embedding"));
 		BigDecimal alpha = new BigDecimal(alphaStr);
 		BigDecimal gamma = new BigDecimal(gammaStr);
 
 		// Compute distance for positive and negative triples
-		BigDecimal dPos = BigDecimal.ZERO;
-		BigDecimal dNeg = BigDecimal.ZERO;
-
-		for (int i = 0; i < sEmb.size(); i++) {
-			BigDecimal diffPos = sEmb.get(i).add(pEmb.get(i)).subtract(oEmb.get(i));
-			BigDecimal diffNeg = spEmb.get(i).add(pEmb.get(i)).subtract(opEmb.get(i));
-
-			if (distanceStr.equals("L1")) {
-				dPos = dPos.add(diffPos.abs());
-				dNeg = dNeg.add(diffNeg.abs());
-			} else { // L2
-				dPos = dPos.add(diffPos.multiply(diffPos));
-				dNeg = dNeg.add(diffNeg.multiply(diffNeg));
-			}
-		}
-
-		if (distanceStr.equals("L2")) {
-			dPos = dPos.sqrt(MathContext.DECIMAL128);
-			dNeg = dNeg.sqrt(MathContext.DECIMAL128);
-		}
+		BigDecimal dPos = distance(sEmb, pEmb, oEmb, distanceStr);
+		BigDecimal dNeg = distance(spEmb, pEmb, opEmb, distanceStr);
 
 		if (gamma.add(dPos).subtract(dNeg).compareTo(BigDecimal.ZERO) <= 0) {
 			return; // No update needed
@@ -150,8 +141,8 @@ public class TransEModelTrain {
 
 		// Update embeddings
 		for (int i = 0; i < sEmb.size(); i++) {
-			BigDecimal xi = BigDecimal.TWO.multiply(sEmb.get(i).add(pEmb.get(i).subtract(oEmb.get(i))));
-			BigDecimal xpi = BigDecimal.TWO.multiply(spEmb.get(i).add(pEmb.get(i).subtract(opEmb.get(i))));
+			BigDecimal xi = BigDecimal.TWO.multiply(sEmb.get(i).add(pEmb.get(i)).subtract(oEmb.get(i)));
+			BigDecimal xpi = BigDecimal.TWO.multiply(spEmb.get(i).add(pEmb.get(i)).subtract(opEmb.get(i)));
 
 			if (distanceStr.equals("L1")) {
 				xi = BigDecimal.valueOf(xi.signum());
@@ -164,11 +155,174 @@ public class TransEModelTrain {
 			opEmb.set(i, opEmb.get(i).subtract(alpha.multiply(xpi)));
 			pEmb.set(i, pEmb.get(i).subtract(alpha.multiply(xi)).add(alpha.multiply(xpi)));
 		}
+
 		s.setProperty("embedding", toStringArray(sEmb));
 		o.setProperty("embedding", toStringArray(oEmb));
-		sp.setProperty("embedding", toStringArray(spEmb));
-		op.setProperty("embedding", toStringArray(opEmb));
+		if (!sp.equals(s)) sp.setProperty("embedding", toStringArray(spEmb));
+		if (!op.equals(o)) op.setProperty("embedding", toStringArray(opEmb));
 		p.setProperty("embedding", toStringArray(pEmb));
+	}
+
+	private static void Train(
+			GraphDatabaseService db,
+			int dim,
+			int batchSize,
+			int negativeRate,
+			int epochs,
+			String alpha,
+			String gamma,
+			String distance) {
+		Transaction tx = db.beginTx();
+
+		// Initialize entity embeddings
+		db.executeTransactionally(
+				"""
+					MATCH (e:Entity)
+					WITH e ORDER BY e.id
+					CALL {WITH e CALL gdb.initializeEntity(e, $dim)} IN TRANSACTIONS OF 100 ROWS
+				""",
+				Map.of("dim", dim)
+		);
+
+		// Initialize predicate embeddings
+		db.executeTransactionally(
+				"""
+					MATCH ()-[p]->()
+					WITH type(p) AS label, p
+					ORDER BY label, p.id
+					WITH label, collect(p)[0] AS minP
+					CALL {
+						WITH minP
+						CALL gdb.initializePredicate(minP, $dim)
+					} IN TRANSACTIONS OF 100 ROWS
+				""",
+				Map.of("dim", dim)
+		);
+
+		// Get max fact id
+		long maxFactId = (long) tx.execute("MATCH ()-[p]->() RETURN MAX(p.id) AS id").next().get("id");
+
+		// Get max entity id
+		long maxEntityId = (long) tx.execute("MATCH (e:Entity) RETURN MAX(e.id) AS id").next().get("id");
+
+		// Get elementIds of predicates with embeddings
+		Map<String, String> predicateIds = db.executeTransactionally(
+				"""
+                    MATCH ()-[p]->()
+                    WITH type(p) AS label, p
+                    ORDER BY p.id
+                    WITH label, collect(p)[0] AS minP
+                    RETURN collect([label, elementId(minP)]) AS pairs
+                """,
+				Map.of(),
+				r -> ((List<List<String>>) r.next().get("pairs")).stream().collect(Collectors.toMap(l -> l.get(0), l -> l.get(1)))
+		);
+
+		// For each epoch
+		for (int i = 0; i < epochs; i++) {
+			System.out.println("Epoch " + i);
+
+			// Normalize entities
+			db.executeTransactionally("MATCH (e:Entity) CALL {WITH e CALL gdb.normalizeEntity(e)} IN TRANSACTIONS OF 100 ROWS", Map.of("dim", dim));
+
+			// Sample batch
+			System.out.println("- Sampling batch");
+			long startTime = System.nanoTime();
+
+			List<Map<String, Object>> B = new ArrayList<>();
+			for (int j = 0; j < batchSize; j++) {
+				// Get random fact in training split
+				long fId = -1;
+				while (fId == -1 || !FactExists(tx, fId)) {
+					fId = random.nextLong(maxFactId + 1);
+				}
+				Map<String, Object> fact = tx.execute("MATCH (s:Entity)-[p {id: $fId}]->(o:Entity) RETURN s.id AS s, type(p) AS p, o.id AS o", Map.of("fId", fId)).next();
+				long s = (long) fact.get("s");
+				String p = fact.get("p").toString();
+				long o = (long) fact.get("o");
+
+				// Generate negative samples
+				for (int k = 0; k < negativeRate; ) {
+					long eId = random.nextLong(maxEntityId + 1);
+					boolean corruptS = random.nextLong(100) < 50;
+					if (corruptS) {
+						if (!CorruptedFactExists(tx, eId, p, o)) {
+							B.add(Map.of("s", s, "p", p, "o", o, "sp", eId, "op", o));
+							k++;
+						}
+					} else {
+						if (!CorruptedFactExists(tx, s, p, eId)) {
+							B.add(Map.of("s", s, "p", p, "o", o, "sp", s, "op", eId));
+							k++;
+						}
+					}
+				}
+			}
+
+			long elapsedTimeNanos = System.nanoTime() - startTime;
+			double elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
+			System.out.println("- Sampling took: " + elapsedTimeSeconds + "s");
+
+			System.out.println("- Updating embeddings");
+			startTime = System.nanoTime();
+
+			// Update embeddings based on ∇L(B) using α
+			for (Map<String, Object> sample : B) {
+				long s = (long) sample.get("s");
+				long o = (long) sample.get("o");
+				long sp = (long) sample.get("sp");
+				long op = (long) sample.get("op");
+				String p = (String) sample.get("p");
+				String pId = predicateIds.get(p);
+				db.executeTransactionally(
+						"""
+							MATCH ()-[p]->()
+							WHERE elementId(p) = $p
+							MATCH (s:Entity {id: $s})
+							MATCH (o:Entity {id: $o})
+							MATCH (sp:Entity {id: $sp})
+							MATCH (op:Entity {id: $op})
+							CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
+						""",
+						Map.of("p", pId, "s", s, "o", o, "sp", sp, "op", op, "gamma", gamma, "dist", distance, "alpha", alpha)
+				);
+			}
+
+			elapsedTimeNanos = System.nanoTime() - startTime;
+			elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
+			System.out.println("- Updating took: " + elapsedTimeSeconds + "s");
+
+			System.out.println("- Scaling predicate embeddings");
+			startTime = System.nanoTime();
+
+			// Scale predicate embeddings
+			for (Map<String, Object> sample : B) {
+				String pId = predicateIds.get((String) sample.get("p"));
+				db.executeTransactionally(
+						"""
+                            MATCH ()-[p]->()
+                            WHERE elementId(p) = $p
+                            CALL gdb.scalePredicate(p)
+                        """,
+						Map.of("p", pId)
+				);
+			}
+
+			elapsedTimeNanos = System.nanoTime() - startTime;
+			elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
+			System.out.println("- Scaling took: " + elapsedTimeSeconds + "s");
+		}
+
+		tx.commit();
+		tx.close();
+	}
+
+	private static boolean FactExists(Transaction tx, long id) {
+		return tx.execute("MATCH ()-[p {id: $id, split: 0}]->() RETURN p", Map.of("id", id)).hasNext();
+	}
+
+	private static boolean CorruptedFactExists(Transaction tx, long sp, String p, long op) {
+		return tx.execute(String.format("MATCH (sp:Entity {id: $sp})-[p:`%s` {split: 0}]->(op:Entity {id: $op}) RETURN *", p), Map.of("sp", sp, "op", op)).hasNext();
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -183,8 +337,8 @@ public class TransEModelTrain {
 			int negativeRate = json.getInt("nr");
 			int totalEpochs = json.getInt("epochs");
 			int seed = json.getInt("seed");
-			double alpha = json.getDouble("alpha");
-			double gamma = json.getDouble("gamma");
+			String alpha = String.valueOf(json.getDouble("alpha"));
+			String gamma = String.valueOf(json.getDouble("gamma"));
 			String distance = json.getString("dist");
 
 			// Get the seed
@@ -208,123 +362,6 @@ public class TransEModelTrain {
 				Train(db, dim, batchSize, negativeRate, totalEpochs, alpha, gamma, distance);
 			}
 		}
-	}
-
-	private static void Train(
-			GraphDatabaseService db,
-			int dim,
-			int batchSize,
-			int negativeRate,
-			int epochs,
-			double alpha,
-			double gamma,
-			String distance) {
-		// Initialize entity embeddings
-		db.executeTransactionally("MATCH (e:Entity {split: 0}) CALL {WITH e CALL gdb.initializeEntity(e, $dim)} IN TRANSACTIONS OF 100 ROWS", Map.of("dim", dim));
-
-		// Initialize predicate embeddings
-		db.executeTransactionally(
-				"""
-					MATCH ()-[p]->()
-					WITH type(p) AS label, p
-					ORDER BY p.id
-					WITH label, collect(p)[0] AS minP
-					CALL {
-						WITH minP
-						CALL gdb.initializePredicate(minP, $dim)
-					} IN TRANSACTIONS OF 100 ROWS
-				""",
-				Map.of("dim", dim)
-		);
-
-		// Get max fact id
-		long maxFactId = db.executeTransactionally("MATCH ()-[p]->() RETURN MAX(p.id) AS id", Map.of(), r -> (long) r.next().get("id"));
-
-		// Get max entity id
-		long maxEntityId = db.executeTransactionally("MATCH (e:Entity) RETURN MAX(e.id) AS id", Map.of(), r -> (long) r.next().get("id"));
-
-		// For each epoch
-		for (int i = 0; i < epochs; i++) {
-			System.out.println("-- Epoch " + i + " --");
-
-			// Normalize entities
-			db.executeTransactionally("MATCH (e:Entity {split: 0}) CALL {WITH e CALL gdb.normalizeEntity(e)} IN TRANSACTIONS OF 100 ROWS", Map.of("dim", dim));
-			List<Map<String, Object>> B = new ArrayList<>();
-
-			// Sample batch
-			for (int j = 0; j < batchSize; j++) {
-				// Get random fact in training split
-				long fId = -1;
-				while (fId == -1 || !FactExists(db, fId)) {
-					fId = random.nextLong(maxFactId + 1);
-				}
-				Map<String, Object> fact = db.executeTransactionally("MATCH (s:Entity)-[p {id: $fId}]->(o:Entity) RETURN s.id AS s, type(p) AS p, o.id AS o", Map.of("fId", fId), Result::next);
-				long s = (long) fact.get("s");
-				String p = fact.get("p").toString();
-				long o = (long) fact.get("o");
-
-				// Generate negative samples
-				for (int k = 0; k < negativeRate; ) {
-					long eId = random.nextLong(maxEntityId + 1);
-					if (EntityExists(db, eId)) {
-						boolean corruptS = random.nextLong(100) < 50;
-						if (corruptS) {
-							boolean exists = db.executeTransactionally(String.format("MATCH (e:Entity {id: $eId})-[p:`%s` {split: 0}]->(o:Entity {id: $oId}) RETURN *", p), Map.of("eId", eId, "oId", o), Result::hasNext);
-							if (!exists) {
-								B.add(Map.of("s", s, "p", p, "o", o, "sp", eId, "op", o));
-								k++;
-							}
-						} else {
-							boolean exists = db.executeTransactionally(String.format("MATCH (s:Entity {id: $sId})-[p:`%s` {split: 0}]->(e:Entity {id: $eId}) RETURN *", p), Map.of("sId", s, "eId", eId, "fId", fId), Result::hasNext);
-							if (!exists) {
-								B.add(Map.of("s", s, "p", p, "o", o, "sp", s, "op", eId));
-								k++;
-							}
-						}
-					}
-				}
-			}
-
-			// Update embeddings based on ∇L(B) using α
-			for (Map<String, Object> sample : B) {
-				db.executeTransactionally(
-						"""
-                            MATCH ()-[p:`%s`]->()
-                            WITH p
-                            ORDER BY p.id
-                            LIMIT 1
-                            MATCH (s:Entity {id: $s})-[r:`%s` {split: 0}]->(o:Entity {id: $o})
-                            MATCH (sp:Entity {id: $sp})
-                            MATCH (op:Entity {id: $op})
-                            CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
-                        """.formatted(sample.get("p"), sample.get("p")),
-						Map.of("s", sample.get("s"), "o", sample.get("o"), "sp", sample.get("sp"), "op", sample.get("op"), "gamma", gamma, "dist", distance, "alpha", alpha)
-				);
-			}
-
-			// Scale predicate embeddings
-			for (Map<String, Object> sample : B) {
-				db.executeTransactionally(
-						"""
-                            MATCH ()-[p:`%s`]->()
-                            WITH p
-                            ORDER BY p.id
-                            LIMIT 1
-                            CALL gdb.scalePredicate(p)
-                        """.formatted(sample.get("p"))
-				);
-			}
-
-			// TODO: Evaluate early stopping based on validation split
-		}
-	}
-
-	private static boolean FactExists(GraphDatabaseService db, long id) {
-		return db.executeTransactionally("MATCH ()-[p {id: $id, split: 0}]->() RETURN p", Map.of("id", id), Result::hasNext);
-	}
-
-	private static boolean EntityExists(GraphDatabaseService db, long id) {
-		return db.executeTransactionally("MATCH (e {id: $id, split: 0}) RETURN e", Map.of("id", id), Result::hasNext);
 	}
 
 	private static DatabaseManagementService getNeo4jConnection(String neo4jFolder, String database) {
