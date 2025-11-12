@@ -31,9 +31,9 @@ public class TransEModelTrain {
 	private String[] generateEmbedding(long dimension) {
 		String[] embedding = new String[(int) dimension];
 		for (int i = 0; i < dimension; i++) {
-			BigDecimal v = (new BigDecimal((random.nextLong(100) + 1))).divide(new BigDecimal(100), MC);
+			BigDecimal v = BigDecimal.valueOf((random.nextLong(100) + 1)).divide(new BigDecimal(100), MC);
 			BigDecimal max = BigDecimal.valueOf(6).divide(BigDecimal.valueOf(dimension).sqrt(MC), MC);
-			v = v.multiply(max.multiply(BigDecimal.TWO, MC), MC).subtract(max);
+			v = v.multiply(max.multiply(BigDecimal.TWO)).subtract(max);
 			embedding[i] = v.toPlainString();
 		}
 		return embedding;
@@ -43,7 +43,7 @@ public class TransEModelTrain {
 		BigDecimal norm = new BigDecimal(0);
         for (String s : embedding) {
             BigDecimal v = new BigDecimal(s);
-            norm = norm.add(v.multiply(v, MC));
+            norm = norm.add(v.multiply(v));
         }
 		norm = norm.sqrt(MC);
 		for (int i = 0; i < embedding.length; i++) {
@@ -54,7 +54,7 @@ public class TransEModelTrain {
 		return embedding;
 	}
 
-	private List<BigDecimal> toBigDecimalList(String[] strList) {
+	private static List<BigDecimal> toBigDecimalList(String[] strList) {
 		return new ArrayList<>(Arrays.stream(strList).map(BigDecimal::new).toList());
 	}
 
@@ -105,14 +105,14 @@ public class TransEModelTrain {
 		x.setProperty("embedding", toStringArray(embedding));
 	}
 
-	private BigDecimal distance(List<BigDecimal> sEmb, List<BigDecimal> pEmb, List<BigDecimal> oEmb, String distanceStr) {
+	private static BigDecimal distance(List<BigDecimal> sEmb, List<BigDecimal> pEmb, List<BigDecimal> oEmb, String distanceStr) {
 		BigDecimal d = BigDecimal.ZERO;
 		for (int i = 0; i < sEmb.size(); i++) {
 			BigDecimal diff = sEmb.get(i).add(pEmb.get(i)).subtract(oEmb.get(i));
 			if (distanceStr.equals("L1"))
 				d = d.add(diff.abs());
 			else
-				d = d.add(diff.multiply(diff, MC));
+				d = d.add(diff.multiply(diff));
 		}
 		if (distanceStr.equals("L2"))
 			d = d.sqrt(MC);
@@ -188,8 +188,8 @@ public class TransEModelTrain {
 		db.executeTransactionally(
 				"""
 					MATCH ()-[p]->()
-					WITH type(p) AS label, p
-					ORDER BY label, p.id
+					WITH p, type(p) AS label
+					ORDER BY p.id
 					WITH label, collect(p)[0] AS minP
 					CALL {
 						WITH minP
@@ -200,7 +200,7 @@ public class TransEModelTrain {
 		);
 
 		// Get max fact id
-		long maxFactId = (long) tx.execute("MATCH ()-[p]->() RETURN MAX(p.id) AS id").next().get("id");
+		long maxFactId = (long) tx.execute("MATCH ()-[p {split: 0}]->() RETURN MAX(p.id) AS id").next().get("id");
 
 		// Get max entity id
 		long maxEntityId = (long) tx.execute("MATCH (e:Entity) RETURN MAX(e.id) AS id").next().get("id");
@@ -209,7 +209,7 @@ public class TransEModelTrain {
 		Map<String, String> predicateIds = db.executeTransactionally(
 				"""
                     MATCH ()-[p]->()
-                    WITH type(p) AS label, p
+                    WITH p, type(p) AS label
                     ORDER BY p.id
                     WITH label, collect(p)[0] AS minP
                     RETURN collect([label, elementId(minP)]) AS pairs
@@ -222,14 +222,12 @@ public class TransEModelTrain {
 		for (int i = 0; i < epochs; i++) {
 			System.out.println("Epoch " + i);
 
-			// Normalize entities
-			db.executeTransactionally("MATCH (e:Entity) CALL {WITH e CALL gdb.normalizeEntity(e)} IN TRANSACTIONS OF 100 ROWS", Map.of("dim", dim));
-
 			// Sample batch
 			System.out.println("- Sampling batch");
 			long startTime = System.nanoTime();
+			Set<Long> entities = new HashSet<>();
 
-			List<Map<String, Object>> B = new ArrayList<>();
+			List<Map<String, Object>> batch = new ArrayList<>();
 			for (int j = 0; j < batchSize; j++) {
 				// Get random fact in training split
 				long fId = -1;
@@ -247,12 +245,14 @@ public class TransEModelTrain {
 					boolean corruptS = random.nextLong(100) < 50;
 					if (corruptS) {
 						if (!CorruptedFactExists(tx, eId, p, o)) {
-							B.add(Map.of("s", s, "p", p, "o", o, "sp", eId, "op", o));
+							batch.add(Map.of("s", s, "p", p, "o", o, "sp", eId, "op", o, "pId", predicateIds.get(p)));
+							Collections.addAll(entities, s, o, eId);
 							k++;
 						}
 					} else {
 						if (!CorruptedFactExists(tx, s, p, eId)) {
-							B.add(Map.of("s", s, "p", p, "o", o, "sp", s, "op", eId));
+							batch.add(Map.of("s", s, "p", p, "o", o, "sp", s, "op", eId, "pId", predicateIds.get(p)));
+							Collections.addAll(entities, s, o, eId);
 							k++;
 						}
 					}
@@ -261,32 +261,34 @@ public class TransEModelTrain {
 
 			long elapsedTimeNanos = System.nanoTime() - startTime;
 			double elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
-			System.out.println("- Sampling took: " + elapsedTimeSeconds + "s");
+			System.out.println("- Sampling took: " + elapsedTimeSeconds + "s, sampled " + batch.size());
+
+			// Normalize embeddings
+			db.executeTransactionally(
+					"""
+						UNWIND $entities AS eId
+						MATCH (e:Entity {id: eId})
+						CALL gdb.normalizeEntity(e)
+					""",
+					Map.of("entities", new ArrayList<>(entities))
+			);
 
 			System.out.println("- Updating embeddings");
 			startTime = System.nanoTime();
 
 			// Update embeddings based on ∇L(B) using α
-			for (Map<String, Object> sample : B) {
-				long s = (long) sample.get("s");
-				long o = (long) sample.get("o");
-				long sp = (long) sample.get("sp");
-				long op = (long) sample.get("op");
-				String p = (String) sample.get("p");
-				String pId = predicateIds.get(p);
-				db.executeTransactionally(
-						"""
-							MATCH ()-[p]->()
-							WHERE elementId(p) = $p
-							MATCH (s:Entity {id: $s})
-							MATCH (o:Entity {id: $o})
-							MATCH (sp:Entity {id: $sp})
-							MATCH (op:Entity {id: $op})
-							CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
-						""",
-						Map.of("p", pId, "s", s, "o", o, "sp", sp, "op", op, "gamma", gamma, "dist", distance, "alpha", alpha)
-				);
-			}
+			db.executeTransactionally(
+					"""
+						UNWIND $batch AS sample
+						MATCH ()-[p]->() WHERE elementId(p) = sample.pId
+						MATCH (s:Entity {id: sample.s})
+						MATCH (o:Entity {id: sample.o})
+						MATCH (sp:Entity {id: sample.sp})
+						MATCH (op:Entity {id: sample.op})
+						CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
+					""",
+					Map.of("batch", batch, "gamma", gamma, "dist", distance, "alpha", alpha)
+			);
 
 			elapsedTimeNanos = System.nanoTime() - startTime;
 			elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
@@ -296,17 +298,18 @@ public class TransEModelTrain {
 			startTime = System.nanoTime();
 
 			// Scale predicate embeddings
-			for (Map<String, Object> sample : B) {
-				String pId = predicateIds.get((String) sample.get("p"));
-				db.executeTransactionally(
-						"""
-                            MATCH ()-[p]->()
-                            WHERE elementId(p) = $p
-                            CALL gdb.scalePredicate(p)
-                        """,
-						Map.of("p", pId)
-				);
-			}
+			db.executeTransactionally(
+					"""
+						MATCH ()-[p]->()
+						WITH type(p) AS label, p
+						ORDER BY p.id
+						WITH label, collect(p)[0] AS minP
+						CALL {
+							WITH minP
+							CALL gdb.scalePredicate(minP)
+						} IN TRANSACTIONS OF 100 ROWS
+					"""
+			);
 
 			elapsedTimeNanos = System.nanoTime() - startTime;
 			elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
@@ -322,7 +325,7 @@ public class TransEModelTrain {
 	}
 
 	private static boolean CorruptedFactExists(Transaction tx, long sp, String p, long op) {
-		return tx.execute(String.format("MATCH (sp:Entity {id: $sp})-[p:`%s` {split: 0}]->(op:Entity {id: $op}) RETURN *", p), Map.of("sp", sp, "op", op)).hasNext();
+		return tx.execute(String.format("MATCH (sp:Entity {id: $sp})-[p:`%s` {split: 0}]->(op:Entity {id: $op}) RETURN p", p), Map.of("sp", sp, "op", op)).hasNext();
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -341,7 +344,7 @@ public class TransEModelTrain {
 			String gamma = String.valueOf(json.getDouble("gamma"));
 			String distance = json.getString("dist");
 
-			// Get the seed
+			// Set the seed
 			random.setSeed(seed);
 
 			try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, kg);) {
