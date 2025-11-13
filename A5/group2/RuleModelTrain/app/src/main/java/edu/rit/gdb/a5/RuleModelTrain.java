@@ -16,13 +16,88 @@ import org.neo4j.graphdb.Result;
 import org.neo4j.graphdb.Transaction;
 
 public class RuleModelTrain {
+
+	private static String threePieceNugget(Transaction tx, int maxCwaConf, int minSup,
+										   String headPredicate, String[] bodyPredicates, String[] bodyVars){
+		if (bodyPredicates.length == 2) {
+			String cwaConfQuery = String.format(
+					"match (%s)-[b1:`%s` {split: 0}]->(%s), (%s)-[b2:`%s` {split: 0}]->(%s) " +
+							"return elementId(x) as xid, elementId(y) as yid, elementId(z) as zid, " +
+							"elementId(b1) as b1id, elementId(b2) as b2id",
+					bodyVars[0], bodyPredicates[0], bodyVars[1], bodyVars[2], bodyPredicates[1], bodyVars[3]
+			);
+			//get all of cwa conf MATCH (x)-[b1]->(z), (z)-[b2]-(y) RETURN xid, yid, zid, b1id, b2id
+			//for each row returned:
+			//  if xy unique (check tree set)
+			//  if x->y exists then support++
+			//  if __ -> y exists (check -> not b1 or b2) then pcaO++
+			//  if x -> __ exists (check -> not b1 or b2) then pcaS++
+			//  add xy to set
+			//CWA Confidence is super set of everything we need. Get these values and calculating from there.
+
+			int support=0, cwaConf=0, pcaS=0, pcaO=0;
+			TreeSet<String> xyids = new TreeSet<>();
+
+			Result res = tx.execute(cwaConfQuery);
+			while (res.hasNext() && cwaConf < maxCwaConf){
+ 				var nxt = res.next();
+				String currXY = (String)nxt.get("xid") + (String)nxt.get("yid");
+
+				if(!xyids.contains(currXY)) {
+					cwaConf++;
+
+					// support: does (x)-[p]->(y) exist?
+					String miniSupportQ = "MATCH (x)-[:`" + headPredicate + "` {split: 0}]->(y) " +
+							"WHERE elementId(x) = $xid AND elementId(y) = $yid RETURN x.id";
+					Result r1 = tx.execute(miniSupportQ, nxt);
+					if (r1.hasNext()) {
+						support++;
+					}
+					r1.close();
+
+					// pcaS: does (x)-[p]->() exist?
+					String miniS = "MATCH (x)-[r:`" + headPredicate + "` {split: 0}]->() " +
+							"WHERE elementId(x) = $xid AND elementId(r) <> $b1id AND elementId(r) <> $b2id RETURN x.id";
+					Result r2 = tx.execute(miniS, nxt);
+					if (r2.hasNext()) {
+						pcaS++;
+					}
+					r2.close();
+
+					// pcaO: does ()-[p]-(y) exist?
+					String miniO = "MATCH ()-[r:`" + headPredicate + "` {split: 0}]->(y) " +
+							"WHERE elementId(y) = $yid AND elementId(r) <> $b1id AND elementId(r) <> $b2id RETURN y.id";
+					Result r3 = tx.execute(miniO, nxt);
+					if (r3.hasNext()) {
+						pcaO++;
+					}
+					r3.close();
+
+					xyids.add(currXY);
+				}
+			}
+			res.close();
+
+			// Result format:  {"rule": "`commonbloc1(?x, ?y) <= `boycottembargo`(?x, ?z) AND `commonbloc1`(?z, ?y)",
+			// "support_num": 19, "cwa_conf_den": 36, "pca_confs_den": 36, "pca_confo_den": 36}
+			if (support >= minSup && cwaConf < maxCwaConf) {
+				String rule = "`"+headPredicate+"(?x, ?y) <= " + createRuleBody(bodyPredicates, bodyVars);
+				return String.format("{\"rule\": \"%s\", \"support_num\": %d, \"cwa_conf_den\": %d, \"pca_confs_den\": %d, \"pca_confo_den\": %d}\n",
+						rule, support, cwaConf, pcaS, pcaO);
+			} else {
+				return "";
+			}
+		}
+		return "";
+	}
+
 	private static String createCypherBody(String[] bodyPredicates, String[] bodyVars){
 		String result = " ("+ bodyVars[0] +")-[b1:`" + bodyPredicates[0] + "` {split: 0}]->("+ bodyVars[1] +") ";
 		if (bodyPredicates.length > 1){
 			result += ", ("+ bodyVars[2] +")-[b2:`" + bodyPredicates[1] + "` {split: 0}]->("+ bodyVars[3] +") ";
-			//result += " with distinct [x.id, y.id] as pairs, elementId(x) as xid, elementId(y) as yid, elementId(z) as zid return xid, yid, zid";
+			result += " with distinct [x.id, y.id] as pairs, elementId(x) as xid, elementId(y) as yid, collect(elementId(z)) as zid return xid, yid, zid";
 		} else {
-			//result += " with distinct [x.id, y.id] as pairs, elementId(x) as xid, elementId(y) as yid return xid, yid, '' as zid";
+			result += " with distinct [x.id, y.id] as pairs, elementId(x) as xid, elementId(y) as yid return xid, yid, [] as zid";
 		}
 		return result;
 	}
@@ -38,10 +113,10 @@ public class RuleModelTrain {
 	private static String computeSingleRule(Transaction tx, String headPredicate, String[] bodyPredicates,
 										   String[] bodyVars, int maxCwaConf, int minSup){
 		int support=0, cwaConf=0, pcaS=0, pcaO=0;
-		//TreeSet<String> xyids = new TreeSet<>();
+		TreeSet<String> xyids = new TreeSet<>();
 
-		String closedConfQ = "MATCH " + createCypherBody(bodyPredicates, bodyVars)
-				+ " with distinct [x.id, y.id] as pairs, elementId(x) as xid, elementId(y) as yid return xid, yid, '' as zid";
+		String closedConfQ = "MATCH " + createCypherBody(bodyPredicates, bodyVars);
+				//+ " with distinct [x.id, y.id] as pairs, elementId(x) as xid, elementId(y) as yid return xid, yid, '' as zid";
 
 		boolean headInBody = false;
 		if (bodyPredicates[0].equals(headPredicate)) {
@@ -68,7 +143,7 @@ public class RuleModelTrain {
 			// pcaS: does (x)-[p]->(_o_) exist?
 			String miniS = "MATCH (x)-[:`" + headPredicate + "` {split: 0}]->(o) " +
 					"WHERE elementId(x) = $xid ";
-			if (headInBody){ miniS += "AND elementId(o) <> $zid "; }
+			//if (headInBody){ miniS += "AND elementId(o) NOT IN $zid "; }
 			miniS += "RETURN x.id";
 			Result r2 = tx.execute(miniS, nxt);
 			if (r2.hasNext()) {
@@ -80,7 +155,7 @@ public class RuleModelTrain {
 			String miniO = "MATCH (s)-[:`" + headPredicate + "` {split: 0}]->(y) " +
 					"WHERE elementId(y) = $yid ";
 			Result r3;
-			if (headInBody) { miniO += " AND elementId(s) <> $zid "; }
+			//if (headInBody) { miniO += " AND elementId(s) NOT IN $zid "; }
 			miniO += "RETURN y.id";
 			r3 = tx.execute(miniO, nxt);
 			if (r3.hasNext()) {
@@ -162,7 +237,7 @@ public class RuleModelTrain {
 									{"z", "x", "y", "z"},
 							};
 							for (String[] vs : vars){
-								writer.write(computeSingleRule(tx, head, new String[]{pi, pj}, vs, maxCWAConf, minSup));
+								writer.write(threePieceNugget(tx, maxCWAConf, minSup, head, new String[]{pi, pj}, vs));
 							}
 						}
 					}

@@ -1,0 +1,5 @@
+{"rule": "`assesses_effect_of(?x, ?y) <= `affects`(?x, ?z) AND `affects`(?z, ?y)", "support_num": 10, "cwa_conf_den": 1917, "pca_confs_den": 72, "pca_confo_den": 539}
+{"rule": "`assesses_effect_of(?x, ?y) <= `affects`(?x, ?z) AND `affects`(?y, ?z)", "support_num": 51, "cwa_conf_den": 2750, "pca_confs_den": 103, "pca_confo_den": 1765}
+{"rule": "`treats(?x, ?y) <= `affects`(?x, ?z) AND `affects`(?z, ?y)", "support_num": 14, "cwa_conf_den": 1917, "pca_confs_den": 108, "pca_confo_den": 320}
+{"rule": "`treats(?x, ?y) <= `affects`(?x, ?z) AND `affects`(?y, ?z)", "support_num": 21, "cwa_conf_den": 2750, "pca_confs_den": 155, "pca_confo_den": 465}
+{"rule": "`treats(?x, ?y) <= `affects`(?x, ?z) AND `occurs_in`(?y, ?z)", "support_num": 12, "cwa_conf_den": 265, "pca_confs_den": 18, "pca_confo_den": 223}
