@@ -105,7 +105,7 @@ public class TransEEpoch {
 			String alpha = String.valueOf(json.getDouble("alpha"));
 			String gamma = String.valueOf(json.getDouble("gamma"));
 			String distance = json.getString("dist");
-			JSONArray batch = json.getJSONArray("batch");
+			JSONArray batchJSONArray = json.getJSONArray("batch");
 
 			try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, kg);) {
 				GraphDatabaseService db = serviceDb.database(GraphDatabaseSettings.initial_default_database.defaultValue());
@@ -133,31 +133,29 @@ public class TransEEpoch {
 						r -> ((List<List<String>>) r.next().get("pairs")).stream().collect(Collectors.toMap(l -> l.get(0), l -> l.get(1)))
 				);
 
-				long startTime = System.nanoTime();
-				for (int i = 0; i < batch.length(); i++) {
-					JSONObject sample = batch.getJSONObject(i);
+				List<Map<String, Object>> batch = new ArrayList<>();
+				for (int i = 0; i < batchJSONArray.length(); i++) {
+					JSONObject sample = batchJSONArray.getJSONObject(i);
 					long s = sample.getInt("s");
 					long o = sample.getInt("o");
 					long sp = sample.getInt("sp");
 					long op = sample.getInt("op");
 					String p = sample.getString("p");
 					String pId = predicateIds.get(p);
-					db.executeTransactionally(
-							"""
-								MATCH ()-[p]->()
-								WHERE elementId(p) = $p
-								MATCH (s:Entity {id: $s})
-								MATCH (o:Entity {id: $o})
-								MATCH (sp:Entity {id: $sp})
-								MATCH (op:Entity {id: $op})
-								CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
-							""",
-							Map.of("p", pId, "s", s, "o", o, "sp", sp, "op", op, "gamma", gamma, "dist", distance, "alpha", alpha)
-					);
+					batch.add(Map.of("s", s, "pId", pId, "o", o, "sp", sp, "op", op));
 				}
-				long elapsedTimeNanos = System.nanoTime() - startTime;
-				double elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
-				System.out.println("- Updating embeddings took: " + elapsedTimeSeconds + "s");
+				db.executeTransactionally(
+						"""
+                            UNWIND $batch AS sample
+                            MATCH ()-[p]->() WHERE elementId(p) = sample.pId
+                            MATCH (s:Entity {id: sample.s})
+                            MATCH (o:Entity {id: sample.o})
+                            MATCH (sp:Entity {id: sample.sp})
+                            MATCH (op:Entity {id: sample.op})
+                            CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
+                        """,
+						Map.of("batch", batch, "gamma", gamma, "dist", distance, "alpha", alpha)
+				);
 			}
 		}
 	}
