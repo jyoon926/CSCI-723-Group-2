@@ -1,0 +1,3 @@
+{"rule": "`country(?x, ?y) <= `official language`(?x, ?z) AND `official language`(?y, ?z)", "support_num": 22, "cwa_conf_den": 5266, "pca_confs_den": 557, "pca_confo_den": 700}
+{"rule": "`official language(?x, ?y) <= `country`(?x, ?z) AND `official language`(?z, ?y)", "support_num": 14, "cwa_conf_den": 145, "pca_confs_den": 21, "pca_confo_den": 109}
+{"rule": "`official language(?x, ?y) <= `country`(?z, ?x) AND `official language`(?z, ?y)", "support_num": 16, "cwa_conf_den": 25, "pca_confs_den": 21, "pca_confo_den": 25}

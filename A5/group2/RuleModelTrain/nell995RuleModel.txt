@@ -1,0 +1,4 @@
+{"rule": "`concept:animalsuchasinvertebrate(?x, ?y) <= `concept:animalsuchasinvertebrate`(?y, ?x)", "support_num": 22, "cwa_conf_den": 287, "pca_confs_den": 140, "pca_confo_den": 101}
+{"rule": "`concept:animalsuchasinvertebrate(?x, ?y) <= `concept:animalsuchasinvertebrate`(?x, ?z) AND `concept:animalsuchasinvertebrate`(?z, ?y)", "support_num": 32, "cwa_conf_den": 600, "pca_confs_den": 324, "pca_confo_den": 442}
+{"rule": "`concept:animalsuchasinvertebrate(?x, ?y) <= `concept:animalsuchasinvertebrate`(?z, ?x) AND `concept:animalsuchasinvertebrate`(?z, ?y)", "support_num": 30, "cwa_conf_den": 1280, "pca_confs_den": 383, "pca_confo_den": 879}
+{"rule": "`concept:animalsuchasinvertebrate(?x, ?y) <= `concept:animalsuchasinvertebrate`(?x, ?z) AND `concept:animalsuchasinvertebrate`(?y, ?z)", "support_num": 22, "cwa_conf_den": 2378, "pca_confs_den": 1177, "pca_confo_den": 468}

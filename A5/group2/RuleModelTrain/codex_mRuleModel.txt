@@ -1,0 +1,7 @@
+{"rule": "`country of citizenship(?x, ?y) <= `residence`(?x, ?y)", "support_num": 62, "cwa_conf_den": 1741, "pca_confs_den": 1604, "pca_confo_den": 178}
+{"rule": "`country of citizenship(?x, ?y) <= `residence`(?x, ?z) AND `diplomatic relation`(?z, ?y)", "support_num": 66, "cwa_conf_den": 10822, "pca_confs_den": 10122, "pca_confo_den": 8053}
+{"rule": "`country of citizenship(?x, ?y) <= `residence`(?x, ?z) AND `diplomatic relation`(?y, ?z)", "support_num": 69, "cwa_conf_den": 10408, "pca_confs_den": 9746, "pca_confo_den": 7899}
+{"rule": "`ethnic group(?x, ?y) <= `country of citizenship`(?x, ?z) AND `ethnic group`(?z, ?y)", "support_num": 725, "cwa_conf_den": 14923, "pca_confs_den": 2171, "pca_confo_den": 14923}
+{"rule": "`ethnic group(?x, ?y) <= `country of citizenship`(?z, ?x) AND `ethnic group`(?z, ?y)", "support_num": 20, "cwa_conf_den": 341, "pca_confs_den": 81, "pca_confo_den": 330}
+{"rule": "`ethnic group(?x, ?y) <= `diplomatic relation`(?x, ?z) AND `ethnic group`(?z, ?y)", "support_num": 12, "cwa_conf_den": 1735, "pca_confs_den": 259, "pca_confo_den": 1735}
+{"rule": "`ethnic group(?x, ?y) <= `diplomatic relation`(?z, ?x) AND `ethnic group`(?z, ?y)", "support_num": 13, "cwa_conf_den": 1759, "pca_confs_den": 250, "pca_confo_den": 1759}

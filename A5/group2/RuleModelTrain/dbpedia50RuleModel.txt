@@ -1,0 +1,1 @@
+{"rule": "`stateOfOrigin(?x, ?y) <= `birthPlace`(?x, ?y)", "support_num": 34, "cwa_conf_den": 2395, "pca_confs_den": 35, "pca_confo_den": 787}
