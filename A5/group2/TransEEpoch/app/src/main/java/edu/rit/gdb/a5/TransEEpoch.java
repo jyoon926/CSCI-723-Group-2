@@ -125,7 +125,7 @@ public class TransEEpoch {
 						"""
 							MATCH ()-[p]->()
 							WITH type(p) AS label, p
-							ORDER BY p.id
+							ORDER BY id(p)
 							WITH label, collect(p)[0] AS minP
 							RETURN collect([label, elementId(minP)]) AS pairs
 						""",
@@ -133,6 +133,7 @@ public class TransEEpoch {
 						r -> ((List<List<String>>) r.next().get("pairs")).stream().collect(Collectors.toMap(l -> l.get(0), l -> l.get(1)))
 				);
 
+				long startTime = System.nanoTime();
 				List<Map<String, Object>> batch = new ArrayList<>();
 				for (int i = 0; i < batchJSONArray.length(); i++) {
 					JSONObject sample = batchJSONArray.getJSONObject(i);
@@ -148,14 +149,17 @@ public class TransEEpoch {
 						"""
                             UNWIND $batch AS sample
                             MATCH ()-[p]->() WHERE elementId(p) = sample.pId
-                            MATCH (s:Entity {id: sample.s})
-                            MATCH (o:Entity {id: sample.o})
-                            MATCH (sp:Entity {id: sample.sp})
-                            MATCH (op:Entity {id: sample.op})
+                            MATCH (s:Entity) WHERE id(s) = sample.s
+                            MATCH (o:Entity) WHERE id(o) = sample.o
+                            MATCH (sp:Entity) WHERE id(sp) = sample.sp
+                            MATCH (op:Entity) WHERE id(op) = sample.op
                             CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
                         """,
 						Map.of("batch", batch, "gamma", gamma, "dist", distance, "alpha", alpha)
 				);
+				long elapsedTimeNanos = System.nanoTime() - startTime;
+				double elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
+				System.out.println("- Updating embeddings took: " + elapsedTimeSeconds + "s");
 			}
 		}
 	}
