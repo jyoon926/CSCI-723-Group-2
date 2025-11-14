@@ -31,7 +31,7 @@ public class TransEModelTrain {
 	private String[] generateEmbedding(long dimension) {
 		String[] embedding = new String[(int) dimension];
 		for (int i = 0; i < dimension; i++) {
-			BigDecimal v = BigDecimal.valueOf((random.nextLong(100) + 1)).divide(new BigDecimal(100), MC);
+			BigDecimal v = BigDecimal.valueOf(random.nextLong(100) + 1).divide(new BigDecimal(100), MC);
 			BigDecimal max = BigDecimal.valueOf(6).divide(BigDecimal.valueOf(dimension).sqrt(MC), MC);
 			v = v.multiply(max.multiply(BigDecimal.TWO)).subtract(max);
 			embedding[i] = v.toPlainString();
@@ -41,10 +41,10 @@ public class TransEModelTrain {
 
 	private String[] normalizeEmbedding(String[] embedding) {
 		BigDecimal norm = new BigDecimal(0);
-        for (String s : embedding) {
-            BigDecimal v = new BigDecimal(s);
-            norm = norm.add(v.multiply(v));
-        }
+		for (String s : embedding) {
+			BigDecimal v = new BigDecimal(s);
+			norm = norm.add(v.multiply(v));
+		}
 		norm = norm.sqrt(MC);
 		for (int i = 0; i < embedding.length; i++) {
 			BigDecimal v = new BigDecimal(embedding[i]);
@@ -172,13 +172,11 @@ public class TransEModelTrain {
 			String alpha,
 			String gamma,
 			String distance) {
-		Transaction tx = db.beginTx();
-
 		// Initialize entity embeddings
 		db.executeTransactionally(
 				"""
 					MATCH (e:Entity)
-					WITH e ORDER BY e.id
+					WITH e ORDER BY id(e)
 					CALL {WITH e CALL gdb.initializeEntity(e, $dim)} IN TRANSACTIONS OF 100 ROWS
 				""",
 				Map.of("dim", dim)
@@ -189,7 +187,7 @@ public class TransEModelTrain {
 				"""
 					MATCH ()-[p]->()
 					WITH p, type(p) AS label
-					ORDER BY p.id
+					ORDER BY id(p)
 					WITH label, collect(p)[0] AS minP
 					CALL {
 						WITH minP
@@ -200,17 +198,17 @@ public class TransEModelTrain {
 		);
 
 		// Get max fact id
-		long maxFactId = (long) tx.execute("MATCH ()-[p {split: 0}]->() RETURN MAX(p.id) AS id").next().get("id");
+		long maxFactId = (long) db.executeTransactionally("MATCH ()-[p {split: 0}]->() RETURN MAX(id(p)) AS id", Map.of(), r -> r.next().get("id"));
 
 		// Get max entity id
-		long maxEntityId = (long) tx.execute("MATCH (e:Entity) RETURN MAX(e.id) AS id").next().get("id");
+		long maxEntityId = (long) db.executeTransactionally("MATCH (e:Entity) RETURN MAX(id(e)) AS id", Map.of(), r -> r.next().get("id"));
 
 		// Get elementIds of predicates with embeddings
 		Map<String, String> predicateIds = db.executeTransactionally(
 				"""
                     MATCH ()-[p]->()
                     WITH p, type(p) AS label
-                    ORDER BY p.id
+                    ORDER BY id(p)
                     WITH label, collect(p)[0] AS minP
                     RETURN collect([label, elementId(minP)]) AS pairs
                 """,
@@ -231,26 +229,30 @@ public class TransEModelTrain {
 			for (int j = 0; j < batchSize; j++) {
 				// Get random fact in training split
 				long fId = -1;
-				while (fId == -1 || !FactExists(tx, fId)) {
+				while (fId == -1 || !FactExists(db, fId)) {
 					fId = random.nextLong(maxFactId + 1);
 				}
-				Map<String, Object> fact = tx.execute("MATCH (s:Entity)-[p {id: $fId}]->(o:Entity) RETURN s.id AS s, type(p) AS p, o.id AS o", Map.of("fId", fId)).next();
+				Map<String, Object> fact = db.executeTransactionally("MATCH (s:Entity)-[p]->(o:Entity) WHERE id(p) = $fId RETURN id(s) AS s, type(p) AS p, id(o) AS o", Map.of("fId", fId), Result::next);
 				long s = (long) fact.get("s");
 				String p = fact.get("p").toString();
 				long o = (long) fact.get("o");
 
 				// Generate negative samples
 				for (int k = 0; k < negativeRate; ) {
-					long eId = random.nextLong(maxEntityId + 1);
+					// Get random entity
+					long eId = -1;
+					while (eId == -1 || !EntityExists(db, eId)) {
+						eId = random.nextLong(maxEntityId + 1);
+					}
 					boolean corruptS = random.nextLong(100) < 50;
 					if (corruptS) {
-						if (!CorruptedFactExists(tx, eId, p, o)) {
+						if (!CorruptedFactExists(db, eId, p, o)) {
 							batch.add(Map.of("s", s, "p", p, "o", o, "sp", eId, "op", o, "pId", predicateIds.get(p)));
 							Collections.addAll(entities, s, o, eId);
 							k++;
 						}
 					} else {
-						if (!CorruptedFactExists(tx, s, p, eId)) {
+						if (!CorruptedFactExists(db, s, p, eId)) {
 							batch.add(Map.of("s", s, "p", p, "o", o, "sp", s, "op", eId, "pId", predicateIds.get(p)));
 							Collections.addAll(entities, s, o, eId);
 							k++;
@@ -261,13 +263,13 @@ public class TransEModelTrain {
 
 			long elapsedTimeNanos = System.nanoTime() - startTime;
 			double elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
-			System.out.println("- Sampling took: " + elapsedTimeSeconds + "s, sampled " + batch.size());
+			System.out.println("- Sampling took: " + elapsedTimeSeconds + "s");
 
 			// Normalize embeddings
 			db.executeTransactionally(
 					"""
 						UNWIND $entities AS eId
-						MATCH (e:Entity {id: eId})
+						MATCH (e:Entity) WHERE id(e) = eId
 						CALL gdb.normalizeEntity(e)
 					""",
 					Map.of("entities", new ArrayList<>(entities))
@@ -276,15 +278,15 @@ public class TransEModelTrain {
 			System.out.println("- Updating embeddings");
 			startTime = System.nanoTime();
 
-			// Update embeddings based on ∇L(B) using α
+			// Update embeddings based on ∇L(B)
 			db.executeTransactionally(
 					"""
 						UNWIND $batch AS sample
 						MATCH ()-[p]->() WHERE elementId(p) = sample.pId
-						MATCH (s:Entity {id: sample.s})
-						MATCH (o:Entity {id: sample.o})
-						MATCH (sp:Entity {id: sample.sp})
-						MATCH (op:Entity {id: sample.op})
+						MATCH (s:Entity) WHERE id(s) = sample.s
+						MATCH (o:Entity) WHERE id(o) = sample.o
+						MATCH (sp:Entity) WHERE id(sp) = sample.sp
+						MATCH (op:Entity) WHERE id(op) = sample.op
 						CALL gdb.gradientDescent(s, p, o, sp, op, $gamma, $dist, $alpha)
 					""",
 					Map.of("batch", batch, "gamma", gamma, "dist", distance, "alpha", alpha)
@@ -302,7 +304,7 @@ public class TransEModelTrain {
 					"""
 						MATCH ()-[p]->()
 						WITH type(p) AS label, p
-						ORDER BY p.id
+						ORDER BY id(p)
 						WITH label, collect(p)[0] AS minP
 						CALL {
 							WITH minP
@@ -315,17 +317,26 @@ public class TransEModelTrain {
 			elapsedTimeSeconds = (double) elapsedTimeNanos / 1_000_000_000;
 			System.out.println("- Scaling took: " + elapsedTimeSeconds + "s");
 		}
-
-		tx.commit();
-		tx.close();
 	}
 
-	private static boolean FactExists(Transaction tx, long id) {
-		return tx.execute("MATCH ()-[p {id: $id, split: 0}]->() RETURN p", Map.of("id", id)).hasNext();
+	private static boolean FactExists(GraphDatabaseService db, long id) {
+		return db.executeTransactionally("MATCH ()-[p]->() WHERE id(p) = $id AND p.split = 0 RETURN p", Map.of("id", id), Result::hasNext);
 	}
 
-	private static boolean CorruptedFactExists(Transaction tx, long sp, String p, long op) {
-		return tx.execute(String.format("MATCH (sp:Entity {id: $sp})-[p:`%s` {split: 0}]->(op:Entity {id: $op}) RETURN p", p), Map.of("sp", sp, "op", op)).hasNext();
+	private static boolean EntityExists(GraphDatabaseService db, long id) {
+		return db.executeTransactionally("MATCH (e:Entity) WHERE id(e) = $id RETURN e", Map.of("id", id), Result::hasNext);
+	}
+
+	private static boolean CorruptedFactExists(GraphDatabaseService db, long sp, String p, long op) {
+		return db.executeTransactionally(
+				"""
+					MATCH (sp:Entity)-[p:`%s`]->(op:Entity)
+					WHERE id(sp) = $sp AND id(op) = $op AND p.split = 0
+					RETURN p
+				""".formatted(p),
+				Map.of("sp", sp, "op", op),
+				Result::hasNext
+		);
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -345,7 +356,7 @@ public class TransEModelTrain {
 			String distance = json.getString("dist");
 
 			// Set the seed
-			random.setSeed(seed);
+			random = new Random(seed);
 
 			try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, kg);) {
 				GraphDatabaseService db = serviceDb.database(GraphDatabaseSettings.initial_default_database.defaultValue());
@@ -361,7 +372,6 @@ public class TransEModelTrain {
 				// everything happens in the database side and things will go faster.
 
 				System.out.println("=== Processing " + kg + " ===");
-				db.executeTransactionally("CREATE INDEX entity_index IF NOT EXISTS FOR (e:Entity) ON e.id");
 				Train(db, dim, batchSize, negativeRate, totalEpochs, alpha, gamma, distance);
 			}
 		}
