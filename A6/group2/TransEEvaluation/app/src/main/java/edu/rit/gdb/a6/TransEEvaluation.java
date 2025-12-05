@@ -1,8 +1,10 @@
 package edu.rit.gdb.a6;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 
+import org.json.JSONObject;
 import org.neo4j.common.DependencyResolver;
 import org.neo4j.configuration.GraphDatabaseSettings;
 import org.neo4j.dbms.api.DatabaseManagementService;
@@ -29,9 +31,11 @@ public class TransEEvaluation {
 
 	public static void main(String[] args) throws Exception {
 		final String neo4jFolder = args[0], jsonFile = args[1];
-
-		{
-			String kg = null, distance = null; // Either L1 or L2
+		String[] jsonLines = Files.readString(Path.of(jsonFile)).split("\n");
+		for (String line : jsonLines) {
+			JSONObject json = new JSONObject(line);
+			String kg = json.getString("kg");
+			String distance = json.getString("dist"); // Either L1 or L2
 
 			try (DatabaseManagementService serviceDb = getNeo4jConnection(neo4jFolder, kg);) {
 				GraphDatabaseService db = serviceDb
@@ -62,11 +66,8 @@ public class TransEEvaluation {
 				.setConfig(GraphDatabaseSettings.memory_transaction_database_max_size, 0l)
 				// This cleans the transaction files every 5 secs.
 				.setConfig(GraphDatabaseSettings.check_point_interval_time, Duration.ofSeconds(5l));
-
 		DatabaseManagementService service = builder.build();
-
 		registerShutdownHook(service);
-
 		return service;
 	}
 
@@ -81,5 +82,4 @@ public class TransEEvaluation {
 			}
 		});
 	}
-
 }

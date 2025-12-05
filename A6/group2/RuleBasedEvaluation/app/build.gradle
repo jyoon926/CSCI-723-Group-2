@@ -8,6 +8,7 @@ repositories {
 
 dependencies {
     implementation 'org.neo4j:neo4j:2025.07.1'
+    implementation 'org.json:json:20231013'
 }
 
 java {
@@ -18,7 +19,7 @@ java {
 
 application {
     // Define the main class for the application.
-    mainClass = 'edu.rit.gdb.a6.TransEEvaluation'
+    mainClass = 'edu.rit.gdb.a6.RuleBasedEvaluation'
 }
 
 tasks.withType(CreateStartScripts).each { task ->
