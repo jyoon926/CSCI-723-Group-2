@@ -107,8 +107,8 @@ public class RuleBasedEvaluation {
 			System.out.println("Processing: " + predicate);
 
 			// Lines 2-3
-			Set<String> domain = getDomainOrRange(db, predicate, true, split);
-			Set<String> range = getDomainOrRange(db, predicate, false, split);
+			Set<Long> domain = getDomainOrRange(db, predicate, true, split);
+			Set<Long> range = getDomainOrRange(db, predicate, false, split);
 			System.out.println("\tRetrieved domain and range.");
 
 			// Line 4
@@ -117,24 +117,23 @@ public class RuleBasedEvaluation {
 			for (Map<String, Object> ruleMap : rules) {
 				System.out.println("\tProcessing: " + ruleMap.get("rule"));
 				// Line 5
-				Set<Map<String, String>> PS = new HashSet<>(), PO = new HashSet<>();
+				Set<Map<String, Long>> PS = new HashSet<>(), PO = new HashSet<>();
 
 				// Line 6
 				String rule = (String) ruleMap.get("rule");
-				for (Map<String, String> pair : getCWA(db, rule, split, predicate)) {
-					String x = pair.get("x");
-					String y = pair.get("y");
-					String s = pair.getOrDefault("s", "");
-					String o = pair.getOrDefault("o", "");
+				for (Map<String, Long> pair : getCWA(db, rule, split, predicate)) {
+					Long x = pair.get("x");
+					Long y = pair.get("y");
+					Long pId = pair.getOrDefault("pId", null);
 
 					// Line 7
 					if (domain.contains(x) || range.contains(y)) {
 						// Lines 8-10
-						if (checkPCA(db, predicate, x, y, split, s, true)) {
+						if (checkPCA(db, predicate, x, y, split, pId, true)) {
 							PS.add(Map.of("x", x, "y", y));
 						}
 						// Lines 11-13
-						else if (checkPCA(db, predicate, x, y, split, o, false)) {
+						else if (checkPCA(db, predicate, x, y, split, pId, false)) {
 							PO.add(Map.of("x", x, "y", y));
 						}
 					}
@@ -147,7 +146,7 @@ public class RuleBasedEvaluation {
 							CALL {
 								WITH pair
 								MATCH (x), (y)
-								WHERE elementId(x) = pair.x AND elementId(y) = pair.y
+								WHERE id(x) = pair.x AND id(y) = pair.y
 								MERGE (x)-[p:`%s`]->(y)
 								ON CREATE SET p.pcas = [$confs]
 								ON MATCH SET p.pcas = coalesce(p.pcas, []) + [$confs]
@@ -163,7 +162,7 @@ public class RuleBasedEvaluation {
 							CALL {
 								WITH pair
 								MATCH (x), (y)
-								WHERE elementId(x) = pair.x AND elementId(y) = pair.y
+								WHERE id(x) = pair.x AND id(y) = pair.y
 								MERGE (x)-[p:`%s`]->(y)
 								ON CREATE SET p.pcao = [$confo]
 								ON MATCH SET p.pcao = coalesce(p.pcao, []) + [$confo]
@@ -176,11 +175,11 @@ public class RuleBasedEvaluation {
 		}
 	}
 
-	private static boolean checkPCA(GraphDatabaseService db, String predicate, String x, String y, int split, String usedSubject, boolean isPcaS) {
+	private static boolean checkPCA(GraphDatabaseService db, String predicate, Long x, Long y, int split, Long usedPID, boolean isPcaS) {
 		boolean head = db.executeTransactionally(
 				"""
 				MATCH (x)-[p:`%s`]->(y)
-				WHERE elementId(x) = $x AND elementId(y) = $y AND p.split <= $split
+				WHERE id(x) = $x AND id(y) = $y AND p.split <= $split
 				RETURN p
 				""".formatted(predicate),
 				Map.of("x", x, "y", y, "split", split),
@@ -189,10 +188,10 @@ public class RuleBasedEvaluation {
 		if (head) return true;
 		String pca = String.format(
 				isPcaS ?
-						"(x)-[p:`%s`]->(yp) WHERE elementId(x) = $x AND elementId(yp) <> $y" +
-							(usedSubject.isEmpty() ? "" : " AND elementId(yp) <> $usedSubject") :
-						"(xp)-[p:`%s`]->(y) WHERE elementId(y) = $y AND elementId(xp) <> $x" +
-							(usedSubject.isEmpty() ? "" : " AND elementId(xp) <> $usedSubject"),
+						"(x)-[p:`%s`]->(yp) WHERE id(x) = $x AND id(yp) <> $y" +
+							(usedPID == null ? "" : " AND id(p) <> $usedPID") :
+						"(xp)-[p:`%s`]->(y) WHERE id(y) = $y AND id(xp) <> $x" +
+							(usedPID == null ? "" : " AND id(p) <> $usedPID"),
 				predicate
 		);
 		String cypher = """
@@ -201,12 +200,12 @@ public class RuleBasedEvaluation {
 		""".formatted(pca);
 		return db.executeTransactionally(
 				cypher,
-				Map.of("x", x, "y", y, "split", split, "usedSubject", usedSubject),
+				usedPID == null ? Map.of("x", x, "y", y, "split", split) : Map.of("x", x, "y", y, "split", split, "usedPID", usedPID),
 				Result::hasNext
 		);
 	}
 
-	private static List<Map<String, String>> getCWA(GraphDatabaseService db, String rule, int split, String headPredicate) {
+	private static List<Map<String, Long>> getCWA(GraphDatabaseService db, String rule, int split, String headPredicate) {
 		// Regex for parsing `rel`(?v1, ?v2)
 		Pattern pattern = Pattern.compile("`([^`]+)`\\(\\?([a-z]),\\s*\\?([a-z])\\)");
 
@@ -220,8 +219,7 @@ public class RuleBasedEvaluation {
 
 
 		// Keep a list of nodes that are subjects of body atoms whose relType equals headPredicate.
-		Map<String, String> usedPair = null;
-		Set<String> labels = new HashSet<>();
+		String usedPRel = "";
 
 		// Iterate through body parts (separated by " AND ")
 		for (String part : ruleBody.split("\\s+AND\\s+")) {
@@ -242,12 +240,8 @@ public class RuleBasedEvaluation {
 
 				// Keep track of pair that matches head predicate
 				if (relType.equals(headPredicate)) {
-					usedPair = Map.of("s", var1, "o", var2);
+					usedPRel = relVar;
 				}
-
-				// Keep track of variables
-				labels.add(var1);
-				labels.add(var2);
 			}
 		}
 
@@ -258,27 +252,27 @@ public class RuleBasedEvaluation {
 		}
 
 		String usedPairString = "";
-		if (usedPair != null) {
-			usedPairString = String.format(", s: elementId(%s), o: elementId(%s)", usedPair.get("s"), usedPair.get("o"));
+		if (!usedPRel.isEmpty()) {
+			usedPairString = String.format(", pId: id(%s)", usedPRel);
 		}
 
 		String cypher = String.format(
-				"MATCH %s WITH DISTINCT %s RETURN COLLECT({x: elementId(x), y: elementId(y)%s}) AS pairs",
-				bodyCypher, String.join(", ", labels.stream().toList()), usedPairString
+				"MATCH %s WITH DISTINCT %s RETURN COLLECT({x: id(x), y: id(y)%s}) AS pairs",
+				bodyCypher, usedPRel.isEmpty() ? "x, y" : "x, y, " + usedPRel, usedPairString
 		);
 
 		System.out.println("\t\t" + cypher);
 
-		return db.executeTransactionally(cypher, Map.of(), r -> (List<Map<String, String>>) r.next().get("pairs"));
+		return db.executeTransactionally(cypher, Map.of(), r -> (List<Map<String, Long>>) r.next().get("pairs"));
 	}
 
-	private static Set<String> getDomainOrRange(GraphDatabaseService db, String predicate, boolean isDomain, int split) {
+	private static Set<Long> getDomainOrRange(GraphDatabaseService db, String predicate, boolean isDomain, int split) {
 		String returnVar = isDomain ? "s" : "o"; // For domain, return s. For range, return o.
 		String query = String.format(
-			"MATCH (s)-[r:`%s`]->(o) WHERE r.split = $split WITH DISTINCT %s RETURN COLLECT(elementId(%s)) AS ids",
+			"MATCH (s)-[r:`%s`]->(o) WHERE r.split = $split WITH DISTINCT %s RETURN COLLECT(id(%s)) AS ids",
 			predicate, returnVar, returnVar
 		);
-		return db.executeTransactionally(query, Map.of("split", split), r -> new HashSet<>(((List<String>) r.next().get("ids"))));
+		return db.executeTransactionally(query, Map.of("split", split), r -> new HashSet<>(((List<Long>) r.next().get("ids"))));
 	}
 
 	private static DatabaseManagementService getNeo4jConnection(String neo4jFolder, String database) {
