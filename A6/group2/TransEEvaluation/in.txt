@@ -1,0 +1,5 @@
+{"kg":"nations", "dist": "L1"}
+{"kg":"umls", "dist": "L2"}
+{"kg":"dbpedia50", "dist": "L1"}
+{"kg":"codex_s", "dist": "L2"}
+{"kg":"nell995", "dist": "L2"}
