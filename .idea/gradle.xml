@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GradleSettings">
+    <option name="linkedExternalProjectsSettings">
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A4/group2/ComputeDMP" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A4/group2/ComputeDMP" />
+            <option value="$PROJECT_DIR$/A4/group2/ComputeDMP/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A4/group2/DetectTopKSpreaders" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A4/group2/DetectTopKSpreaders" />
+            <option value="$PROJECT_DIR$/A4/group2/DetectTopKSpreaders/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A4/group2/SpreadInfection" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A4/group2/SpreadInfection" />
+            <option value="$PROJECT_DIR$/A4/group2/SpreadInfection/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A5/group2/RuleModelTrain" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A5/group2/RuleModelTrain" />
+            <option value="$PROJECT_DIR$/A5/group2/RuleModelTrain/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A5/group2/TransEEpoch" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A5/group2/TransEEpoch" />
+            <option value="$PROJECT_DIR$/A5/group2/TransEEpoch/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A5/group2/TransEModelTrain" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A5/group2/TransEModelTrain" />
+            <option value="$PROJECT_DIR$/A5/group2/TransEModelTrain/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A6/group2/RuleBasedEvaluation" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A6/group2/RuleBasedEvaluation" />
+            <option value="$PROJECT_DIR$/A6/group2/RuleBasedEvaluation/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+      <GradleProjectSettings>
+        <option name="distributionType" value="DEFAULT_WRAPPED" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/A6/group2/TransEEvaluation" />
+        <option name="gradleHome" value="$PROJECT_DIR$/../../../../Gradle/gradle-8.12" />
+        <option name="gradleJvm" value="17" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/A6/group2/TransEEvaluation" />
+            <option value="$PROJECT_DIR$/A6/group2/TransEEvaluation/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+    </option>
+  </component>
+</project>
