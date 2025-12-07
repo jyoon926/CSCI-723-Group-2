@@ -121,7 +121,7 @@ public class RuleBasedEvaluation {
 
 				// Line 6
 				String rule = (String) ruleMap.get("rule");
-				for (Map<String, Long> pair : getCWA(db, rule, split, predicate)) {
+				for (Map<String, Long> pair : getCWA(db, rule, 0, predicate)) { // Set to zero to match Carlos
 					Long x = pair.get("x");
 					Long y = pair.get("y");
 					Long pId = pair.getOrDefault("pId", null);
