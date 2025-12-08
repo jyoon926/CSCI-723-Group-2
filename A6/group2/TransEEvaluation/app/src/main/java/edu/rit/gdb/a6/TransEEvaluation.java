@@ -56,8 +56,8 @@ public class TransEEvaluation {
 	public static void main(String[] args) throws Exception {
 		final String neo4jFolder = args[0], jsonFile = args[1];
 		String[] jsonLines = Files.readString(Path.of(jsonFile)).split("\n");
-		//for (String line : jsonLines) {
-		String line = jsonLines[0];
+		for (String line : jsonLines) {
+		//String line = jsonLines[0];
 			JSONObject json = new JSONObject(line);
 			String kg = json.getString("kg");
 			String distance = json.getString("dist"); // Either L1 or L2
@@ -101,7 +101,7 @@ public class TransEEvaluation {
 						long p = t.get(1);
 						long o = t.get(2);
 
-						System.out.println("Triple: (" + s + ", " + p + ", " + o + ")");
+						//System.out.println("Triple: (" + s + ", " + p + ", " + o + ")");
 
 						// get embedding of p
 						long pid = (long) db.executeTransactionally(
@@ -150,15 +150,12 @@ public class TransEEvaluation {
 										rs_equal++;
 										//System.out.println("Negative (" + s_prime + ", p, " + o + ") scored equal.");
 									}
-									if (y_prime.compareTo(y) < 0) {
-										//System.out.println("Negative (" + s_prime + ", p, " + o + ") score lower.");
-									}
 									totals_negs++;
 								}
 							}
 							double rs = ((2.0 * rs_greater) + rs_equal) / 2.0;
-							System.out.println("rs: " + rs);
-							System.out.println("num negs: " + totals_negs);
+							//System.out.println("rs: " + rs);
+							//System.out.println("num negs: " + totals_negs);
 							if (isSensical){
 								db.executeTransactionally("MATCH ()-[p {id: $pid}]->() SET p.ranks_sensical = $rs, p.totals_sensical = $t",
 										Map.of("pid", p, "rs", rs, "t", totals_negs));
@@ -209,7 +206,7 @@ public class TransEEvaluation {
 					}
 				}
 			}
-		//} //end for loop i think
+		} //end for loop i think
 	}
 
 	private static Set<Long> getDomainOrRange(GraphDatabaseService db, long pid, boolean isDomain, long split) {
