@@ -103,10 +103,6 @@ public class TransEEvaluation {
 
 						System.out.println("Triple: (" + s + ", " + p + ", " + o + ")");
 
-						int total_negs = 0;
-						int rs_greater = 1;
-						int rs_equal = 0;
-
 						// get embedding of p
 						long pid = (long) db.executeTransactionally(
 								"MATCH  ()-[p {id: $curr_pid}]->(), ()-[p0]->() " +
@@ -117,50 +113,99 @@ public class TransEEvaluation {
 						// y = f(s, p, o) --> score
 						String score = (String) db.executeTransactionally(
 								"MATCH (s {id: $subject}) " +
-									  "MATCH ()-[p {id: $pid}]->() " +
-									  "MATCH (o {id: $object}) " +
-									  "RETURN gdb.distance(s, p, o, $dist) as distance",
+										"MATCH ()-[p {id: $pid}]->() " +
+										"MATCH (o {id: $object}) " +
+										"RETURN gdb.distance(s, p, o, $dist) as distance",
 								Map.of("subject", s, "pid", pid, "object", o, "dist", distance),
 								res -> res.next().get("distance"));
 						BigDecimal y = new BigDecimal(score, MathContext.DECIMAL128);
 
-						// for each s' in Entities(range/domain of Gy) and p(s', o) not in Gy (if s' is a negative)
-						Set <Long>  domain = getDomainOrRange(db, pid, true, split);
-						for (Long s_prime : domain) {
-							Long pid_prime = db.executeTransactionally("MATCH (sp {id: $sid})-[p]->(o {id: $oid}), " +
-											"()-[p0 {id: $pid}]-() WHERE p.split <= $split AND type(p) = type(p0) RETURN p.id",
-									Map.of("sid", s_prime, "pid", pid, "oid", o, "split", split),
-									res -> res.hasNext() ? ((Long) res.next().get("p.id")) : -1);
-							// if -1, then result was not found and it is a negative
-							if (pid_prime == -1) {
-								String score_prime = (String) db.executeTransactionally(
-										"MATCH (s {id: $subject}) " +
-												"MATCH ()-[p {id: $pid}]->() " +
-												"MATCH (o {id: $object}) " +
-												"RETURN gdb.distance(s, p, o, $dist) as distance",
-										Map.of("subject", s_prime, "pid", pid, "object", o, "dist", distance),
-										res -> res.next().get("distance"));
-								BigDecimal y_prime = new BigDecimal(score_prime, MathContext.DECIMAL128);  // y' = f(s', p, o)
-								if (y_prime.compareTo(y) > 0) {
-									rs_greater++;
-									//System.out.println("Negative (" + s_prime + ", p, " + o + ") scored higher.");
+						// sensical vs nonsensical
+						for (boolean isSensical : new boolean[]{true, false}) {
+							int totals_negs = 0;
+							int rs_greater = 1;
+							int rs_equal = 0;
+							// for each s' in Entities(range/domain of Gy) and p(s', o) not in Gy (if s' is a negative)
+							Set<Long> domain = getDomainOrRange(db, pid, isSensical, split);
+							for (Long s_prime : domain) {
+								Long pid_prime = db.executeTransactionally("MATCH (sp {id: $sid})-[p]->(o {id: $oid}), " +
+												"()-[p0 {id: $pid}]-() WHERE p.split <= $split AND type(p) = type(p0) RETURN p.id",
+										Map.of("sid", s_prime, "pid", pid, "oid", o, "split", split),
+										res -> res.hasNext() ? ((Long) res.next().get("p.id")) : -1);
+								// if -1, then result was not found and it is a negative
+								if (pid_prime == -1) {
+									String score_prime = (String) db.executeTransactionally(
+											"MATCH (s {id: $subject}) " +
+													"MATCH ()-[p {id: $pid}]->() " +
+													"MATCH (o {id: $object}) " +
+													"RETURN gdb.distance(s, p, o, $dist) as distance",
+											Map.of("subject", s_prime, "pid", pid, "object", o, "dist", distance),
+											res -> res.next().get("distance"));
+									BigDecimal y_prime = new BigDecimal(score_prime, MathContext.DECIMAL128);  // y' = f(s', p, o)
+									if (y_prime.compareTo(y) > 0) {
+										rs_greater++;
+										//System.out.println("Negative (" + s_prime + ", p, " + o + ") scored higher.");
+									}
+									if (y_prime.compareTo(y) == 0) {
+										rs_equal++;
+										//System.out.println("Negative (" + s_prime + ", p, " + o + ") scored equal.");
+									}
+									if (y_prime.compareTo(y) < 0) {
+										//System.out.println("Negative (" + s_prime + ", p, " + o + ") score lower.");
+									}
+									totals_negs++;
 								}
-								if (y_prime.compareTo(y) == 0) {
-									rs_equal++;
-									//System.out.println("Negative (" + s_prime + ", p, " + o + ") scored equal.");
+							}
+							double rs = ((2.0 * rs_greater) + rs_equal) / 2.0;
+							System.out.println("rs: " + rs);
+							System.out.println("num negs: " + totals_negs);
+							if (isSensical){
+								db.executeTransactionally("MATCH ()-[p {id: $pid}]->() SET p.ranks_sensical = $rs, p.totals_sensical = $t",
+										Map.of("pid", p, "rs", rs, "t", totals_negs));
+							} else {
+								db.executeTransactionally("MATCH ()-[p {id: $pid}]->() SET p.ranks_nonsensical = $rs, p.totals_nonsensical = $t",
+										Map.of("pid", p, "rs", rs, "t", totals_negs));
+							}
+
+							// repeat for o (i know, not good code reuse)
+							// for each o' in Entities(range/domain of Gy) and p(s, o') not in Gy (if o' is a negative)
+							int totalo_negs = 0;
+							int ro_greater = 1;
+							int ro_equal = 0;
+							Set<Long> range = getDomainOrRange(db, pid, !isSensical, split);
+							for (Long o_prime : range) {
+								Long pid_prime = db.executeTransactionally("MATCH (sp {id: $sid})-[p]->(o {id: $oid}), " +
+												"()-[p0 {id: $pid}]-() WHERE p.split <= $split AND type(p) = type(p0) RETURN p.id",
+										Map.of("sid", s, "pid", pid, "oid", o_prime, "split", split),
+										res -> res.hasNext() ? ((Long) res.next().get("p.id")) : -1);
+								// if -1, then result was not found and it is a negative
+								if (pid_prime == -1) {
+									String score_prime = (String) db.executeTransactionally(
+											"MATCH (s {id: $subject}) " +
+													"MATCH ()-[p {id: $pid}]->() " +
+													"MATCH (o {id: $object}) " +
+													"RETURN gdb.distance(s, p, o, $dist) as distance",
+											Map.of("subject", s, "pid", pid, "object", o_prime, "dist", distance),
+											res -> res.next().get("distance"));
+									BigDecimal y_prime = new BigDecimal(score_prime, MathContext.DECIMAL128);  // y' = f(s', p, o)
+									if (y_prime.compareTo(y) > 0) {
+										ro_greater++;
+									}
+									if (y_prime.compareTo(y) == 0) {
+										ro_equal++;
+									}
+									totalo_negs++;
 								}
-								if (y_prime.compareTo(y) < 0){
-									//System.out.println("Negative (" + s_prime + ", p, " + o + ") score lower.");
-								}
-								total_negs++;
+							}
+							double ro = ((2.0 * ro_greater) + ro_equal) / 2.0;
+							if (isSensical){
+								db.executeTransactionally("MATCH ()-[p {id: $pid}]->() SET p.ranko_sensical = $ro, p.totalo_sensical = $t",
+										Map.of("pid", p, "ro", ro, "t", totalo_negs));
+							} else {
+								db.executeTransactionally("MATCH ()-[p {id: $pid}]->() SET p.ranko_nonsensical = $ro, p.totalo_nonsensical = $t",
+										Map.of("pid", p, "ro", ro, "t", totalo_negs));
 							}
 						}
-						double rs = (2.0 * rs_greater + rs_equal) / 2.0;
-						System.out.println("rs: " + rs);
-						System.out.println("num negs: " + total_negs);
-						// set ranks_sensical = rs, set totals_sensical = total_negs
-						db.executeTransactionally("MATCH ()-[p {id: $pid}]->() SET p.ranks_sensical = $rs, p.totals_sensical = $t",
-								Map.of("pid", p, "rs", rs, "t", total_negs));
 					}
 				}
 			}
@@ -170,7 +215,7 @@ public class TransEEvaluation {
 	private static Set<Long> getDomainOrRange(GraphDatabaseService db, long pid, boolean isDomain, long split) {
 		String returnVar = isDomain ? "s" : "o"; // For domain, return s. For range, return o.
 		String query = String.format(
-				"MATCH (s)-[r]->(o), ()-[p {id: $pid}]->() WHERE r.split = $split AND type(r) = type(p) WITH DISTINCT %s RETURN COLLECT(id(%s)) AS ids",
+				"MATCH (s)-[r]->(o), ()-[p {id: $pid}]->() WHERE r.split <= $split AND type(r) = type(p) WITH DISTINCT %s RETURN COLLECT(id(%s)) AS ids",
 				returnVar, returnVar
 		);
 		return db.executeTransactionally(query, Map.of("pid", pid, "split", split), r -> new HashSet<>(((List<Long>) r.next().get("ids"))));
